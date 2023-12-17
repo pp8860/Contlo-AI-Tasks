@@ -1,0 +1,25 @@
+import torch
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Define your model and loss function
+    model = MyModel().to(device)
+    criterion = torch.nn.MSELoss()
+
+    # Define your optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    # Training loop
+    for epoch in range(num_epochs):
+        for batch in training_data:
+            # Move batch to GPU
+            inputs, labels = batch[0].to(device), batch[1].to(device)
+
+            # Forward pass
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+
+            # Backward pass and optimization
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
