@@ -1,0 +1,47 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(self, embed_size, max_length=512):
+        super(RotaryPositionalEmbedding, self).__init__()
+        self.embedding_dim = embed_size
+        self.max_length = max_length
+        self.positional_embedding = nn.Parameter(torch.zeros(max_length, embed_size))
+
+    def forward(self, x):
+        positions = torch.arange(0, x.size(1), dtype=torch.float32, device=x.device).unsqueeze(0)
+        sinusoid = torch.sin(positions / torch.pow(10000, 2 * torch.arange(0, self.embedding_dim, 2).float() / self.embedding_dim))
+        cosinoid = torch.cos(positions / torch.pow(10000, 2 * torch.arange(1, self.embedding_dim, 2).float() / self.embedding_dim))
+        positional_encoding = torch.cat([sinusoid, cosinoid], dim=-1)
+        return x + self.positional_embedding[:x.size(1), :]
+
+class GPT2WithRotary(nn.Module):
+    def __init__(self, vocab_size, embed_size, heads, ff_hidden_dim, num_layers, rotary_dim=64, dropout=0.5):
+        super(GPT2WithRotary, self).__init__()
+        self.embed_size = embed_size
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        self.rotary_embedding = RotaryPositionalEmbedding(embed_size, max_length=512)
+        self.transformer_blocks = nn.ModuleList(
+            [TransformerBlock(embed_size, heads, ff_hidden_dim) for _ in range(num_layers)]
+        )
+        self.fc_out = nn.Linear(embed_size, vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask):
+        N, seq_length = x.shape
+        x = self.embedding(x) + self.rotary_embedding(x)
+
+        for transformer in self.transformer_blocks:
+            x = transformer(x, x, x, mask)
+
+        x = self.dropout(x)
+        x = self.fc_out(x)
+
+        return x
+
+# Testing the model with Rotary Positional Embedding
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_rotary = GPT2WithRotary(vocab_size=10000, embed_size=512, heads=8, ff_hidden_dim=2048, num_layers=12, dropout=0.6).to(device)
+output_rotary = model_rotary(input_sequence, mask)
+print(output_rotary.shape)
