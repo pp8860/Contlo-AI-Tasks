@@ -1,0 +1,122 @@
+import torch
+import torch.nn as nn
+
+class GPT2(nn.Module):
+    def __init__(self, num_layers, num_heads, hidden_size, max_sequence_length, vocabulary_size):
+        super(GPT2, self).__init__()
+        self.embedding = nn.Embedding(vocabulary_size, hidden_size)
+        self.positional_encoding = self._create_positional_encoding(max_sequence_length, hidden_size)
+        self.transformer_layers = nn.ModuleList([
+            TransformerLayer(hidden_size, num_heads) for _ in range(num_layers)
+        ])
+        self.fc = nn.Linear(hidden_size, vocabulary_size)
+        
+    def forward(self, input_ids):
+        embedded_input = self.embedding(input_ids)
+        input_with_positional_encoding = embedded_input + self.positional_encoding[:input_ids.size(1), :]
+        
+        for layer in self.transformer_layers:
+            output = layer(input_with_positional_encoding)
+        
+        logits = self.fc(output)
+        return logits
+    
+    def _create_positional_encoding(self, max_sequence_length, hidden_size):
+        positional_encoding = torch.zeros(max_sequence_length, hidden_size)
+        positions = torch.arange(0, max_sequence_length).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, hidden_size, 2) * (-math.log(10000.0) / hidden_size))
+        positional_encoding[:, 0::2] = torch.sin(positions * div_term)
+        positional_encoding[:, 1::2] = torch.cos(positions * div_term)
+        return positional_encoding
+    
+class TransformerLayer(nn.Module):
+    def __init__(self, hidden_size, num_heads):
+        super(TransformerLayer, self).__init__()
+        self.multihead_attention = MultiheadAttention(hidden_size, num_heads)
+        self.feed_forward = FeedForward(hidden_size)
+        self.layer_norm1 = nn.LayerNorm(hidden_size)
+        self.layer_norm2 = nn.LayerNorm(hidden_size)
+        
+    def forward(self, input_tensor):
+        attention_output = self.multihead_attention(input_tensor)
+        residual1 = input_tensor + attention_output
+        layer_norm1_output = self.layer_norm1(residual1)
+        
+        feed_forward_output = self.feed_forward(layer_norm1_output)
+        residual2 = layer_norm1_output + feed_forward_output
+        layer_norm2_output = self.layer_norm2(residual2)
+        
+        return layer_norm2_output
+    
+class MultiheadAttention(nn.Module):
+    def __init__(self, hidden_size, num_heads):
+        super(MultiheadAttention, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_size = hidden_size // num_heads
+        
+        self.query_linear = nn.Linear(hidden_size, hidden_size)
+        self.key_linear = nn.Linear(hidden_size, hidden_size)
+        self.value_linear = nn.Linear(hidden_size, hidden_size)
+        self.output_linear = nn.Linear(hidden_size, hidden_size)
+    
+    def forward(self, input_tensor):
+        batch_size, sequence_length, _ = input_tensor.size()
+        
+        queries = self.query_linear(input_tensor)  # [batch_size, sequence_length, hidden_size]
+        keys = self.key_linear(input_tensor)  # [batch_size, sequence_length, hidden_size]
+        values = self.value_linear(input_tensor)  # [batch_size, sequence_length, hidden_size]
+        
+        queries = queries.view(batch_size, sequence_length, self.num_heads, self.head_size)
+        queries = queries.transpose(1, 2)  # [batch_size, num_heads, sequence_length, head_size]
+        
+        keys = keys.view(batch_size, sequence_length, self.num_heads, self.head_size)
+        keys = keys.transpose(1, 2)  # [batch_size, num_heads, sequence_length, head_size]
+        
+        values = values.view(batch_size, sequence_length, self.num_heads, self.head_size)
+        values = values.transpose(1, 2)  # [batch_size, num_heads, sequence_length, head_size]
+        
+        attention_scores = torch.matmul(queries, keys.transpose(-1, -2))  # [batch_size, num_heads, sequence_length, sequence_length]
+        attention_scores = attention_scores / math.sqrt(self.head_size)
+        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+        
+        context = torch.matmul(attention_probs, values)  # [batch_size, num_heads, sequence_length, head_size]
+        context = context.transpose(1, 2)  # [batch_size, sequence_length, num_heads, head_size]
+        context = context.contiguous().view(batch_size, sequence_length, self.hidden_size)
+        
+        output = self.output_linear(context)  # [batch_size, sequence_length, hidden_size]
+        return output
+    
+class FeedForward(nn.Module):
+    def __init__(self, hidden_size):
+        super(FeedForward, self).__init__()
+        self.hidden_size = hidden_size
+        
+        self.fc1 = nn.Linear(hidden_size, 4 * hidden_size)
+        self.fc2 = nn.Linear(4 * hidden_size, hidden_size)
+    
+    def forward(self, input_tensor):
+        intermediate = self.fc1(input_tensor)
+        intermediate = nn.functional.gelu(intermediate)
+        output = self.fc2(intermediate)
+        return output
+
+# Instantiate the GPT-2 model
+num_layers = 12
+num_heads = 12
+hidden_size = 768
+max_sequence_length = 512
+vocabulary_size = 50257
+
+model = GPT2(num_layers, num_heads, hidden_size, max_sequence_length, vocabulary_size)
+
+# Load pre-trained GPT-2 125M model checkpoints
+model.load_state_dict(torch.load('gpt2_125M_model.pth'))
+
+# Sample prediction
+input_ids = torch.tensor([[1, 2, 3, 4, 5]])  # Example input sequence
+logits = model(input_ids)
+predicted_token_ids = torch.argmax(logits, dim=-1)
+
+print(f"Input sequence: {input_ids}")
+print(f"Predicted token IDs: {predicted_token_ids}")
